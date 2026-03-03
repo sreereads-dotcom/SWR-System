@@ -39,7 +39,11 @@ with tabs[0]:
         if u_t and st.button("Save Transactions"):
             df = pd.read_excel(u_t)
             df.columns = [str(c).strip().lower() for c in df.columns]
-            df_final = df[['ddo', 'date', 'amount']]
+            # Match by searching for keywords
+            ddo_col = [c for c in df.columns if 'ddo' in c][0]
+            date_col = [c for c in df.columns if 'date' in c][0]
+            amt_col = [c for c in df.columns if 'amount' in c][0]
+            df_final = df[[ddo_col, date_col, amt_col]]
             df_final.columns = ['DDO', 'Date', 'Amount']
             conn = sqlite3.connect(DB_FILE)
             df_final.to_sql('transactions', conn, if_exists='append', index=False)
@@ -51,15 +55,15 @@ with tabs[0]:
             df = pd.read_excel(u_l)
             df.columns = [str(c).strip().lower() for c in df.columns]
             try:
-                # MATCHING YOUR FILE: Scroll Date, Cheque/Trans Date, Transaction Amount
+                # Specific mapping for your Linked report columns
                 df_final = df[['ddo', 'scroll date', 'cheque/trans date', 'transaction amount']]
                 df_final.columns = ['DDO', 'Scroll_Date', 'Cheque_Date', 'Amount']
                 conn = sqlite3.connect(DB_FILE)
                 df_final.to_sql('linked', conn, if_exists='append', index=False)
                 conn.close()
                 st.success("Linked Data Saved!")
-            except:
-                st.error("Linked File Error! Check Columns.")
+            except Exception as e:
+                st.error(f"Linked File Error! Ensure columns are 'DDO', 'Scroll Date', 'Cheque/Trans Date', 'Transaction Amount'.")
 
     with col2:
         st.info("📋 Step 2: Upload Permanent Masters")
@@ -67,20 +71,25 @@ with tabs[0]:
         if u_ob and st.button("Save OB Master"):
             df = pd.read_excel(u_ob)
             df.columns = [str(c).strip().lower() for c in df.columns]
-            df_db = df[['ddo', 'head office', 'ob_count', 'ob_amount']]
-            df_db.columns = ['DDO', 'Head_Office', 'ob_count', 'ob_amount']
-            conn = sqlite3.connect(DB_FILE)
-            df_db.to_sql('ob_master', conn, if_exists='append', index=False)
-            conn.close()
-            st.success("OB Saved!")
+            try:
+                # Position based or Keyword based
+                df_db = df.iloc[:, [0, 1, 2, 3]]
+                df_db.columns = ['DDO', 'Head_Office', 'ob_count', 'ob_amount']
+                conn = sqlite3.connect(DB_FILE)
+                df_db.to_sql('ob_master', conn, if_exists='append', index=False)
+                conn.close()
+                st.success("OB Saved!")
+            except:
+                st.error("OB Master must have 4 columns: DDO, Office, Count, Amount")
 
         u_s = st.file_uploader("Staff Mapping", type=['xlsx'], key="us")
         if u_s and st.button("Save Staff Mapping"):
             df = pd.read_excel(u_s)
-            df.columns = [str(c).strip().lower() for c in df.columns]
-            df.columns = ['employee_name', 'ddo']
+            # Take first two columns regardless of name
+            df_final = df.iloc[:, [0, 1]]
+            df_final.columns = ['Employee_Name', 'DDO']
             conn = sqlite3.connect(DB_FILE)
-            df.to_sql('staff_mapping', conn, if_exists='append', index=False)
+            df_final.to_sql('staff_mapping', conn, if_exists='append', index=False)
             conn.close()
             st.success("Staff Saved!")
 
@@ -116,16 +125,15 @@ if not df_staff.empty and not df_ob.empty:
     df_l['Scroll_Date'] = pd.to_datetime(df_l['Scroll_Date'], errors='coerce')
     df_l['Cheque_Date'] = pd.to_datetime(df_l['Cheque_Date'], errors='coerce')
 
-    staff_list = sorted(df_staff['employee_name'].unique().tolist())
+    staff_list = sorted(df_staff['Employee_Name'].unique().tolist())
     sel_staff = st.selectbox("👤 Select Employee", staff_list)
-    my_ddos = df_staff[df_staff['employee_name'] == sel_staff]['ddo'].tolist()
+    my_ddos = df_staff[df_staff['Employee_Name'] == sel_staff]['DDO'].tolist()
     
     date_range = st.date_input("Select Period", value=(datetime(2025, 7, 1), datetime(2025, 9, 30)))
     
     if len(date_range) == 2:
         start_date, end_date = date_range
-        months_idx = pd.date_range(start=start_date, end=end_date, freq='MS')
-        months = months_idx.strftime('%Y-%m').tolist()
+        months = pd.date_range(start=start_date, end=end_date, freq='MS').strftime('%Y-%m').tolist()
         final_rows = []
 
         for ddo in my_ddos:
@@ -135,23 +143,16 @@ if not df_staff.empty and not df_ob.empty:
             office = ob_row['Head_Office'].iloc[0] if not ob_row.empty else "Unknown"
 
             for month in months:
-                # 1. New Raised
                 t_m = df_t[(df_t['DDO'] == ddo) & (df_t['Date'].dt.strftime('%Y-%m') == month)]
-                
-                # 2. Linked Split Logic
                 l_total = df_l[(df_l['DDO'] == ddo) & (df_l['Scroll_Date'].dt.strftime('%Y-%m') == month)]
                 
-                # Current: Scrolled this month AND Cheque issued this month
                 l_curr = l_total[l_total['Cheque_Date'].dt.strftime('%Y-%m') == month]
-                
-                # Arrears: Scrolled this month BUT Cheque issued BEFORE this month
                 l_arr = l_total[l_total['Cheque_Date'].dt.strftime('%Y-%m') < month]
 
                 n_amt, n_cnt = t_m['Amount'].sum(), len(t_m)
                 lc_amt, lc_cnt = l_curr['Amount'].sum(), len(l_curr)
                 la_amt, la_cnt = l_arr['Amount'].sum(), len(l_arr)
 
-                # Closing = Opening + New - (Current Linked + Arrears Linked)
                 cl_amt = (curr_amt + n_amt) - (lc_amt + la_amt)
                 cl_cnt = (curr_cnt + n_cnt) - (lc_cnt + la_cnt)
 
@@ -160,14 +161,14 @@ if not df_staff.empty and not df_ob.empty:
                     'Opening_Cnt': int(curr_cnt), 'Opening_Amt': round(float(curr_amt), 2),
                     'New_Raised_Cnt': int(n_cnt), 'New_Raised_Amt': round(float(n_amt), 2),
                     'Linked_Current_Cnt': int(lc_cnt), 'Linked_Current_Amt': round(float(lc_amt), 2),
-                    'Linked_Arrears_Cnt': int(la_cnt), 'Linked_Arrears_Amt': round(float(la_amt), 2),
+                    'Linked_Arrears_Cnt': int(la_cnt), 'Linked_Arrears_Amt': round(float(la_arr_amt := la_amt), 2),
                     'Closing_Cnt': int(cl_cnt), 'Closing_Amt': round(float(cl_amt), 2)
                 })
                 curr_amt, curr_cnt = cl_amt, cl_cnt
 
         if final_rows:
             report_df = pd.DataFrame(final_rows)
-            st.write("#### 📅 Monthly SWR Breakdown (With Split Linked)")
+            st.write("#### 📅 Monthly SWR Breakdown")
             styled_df = report_df.style.applymap(color_closing, subset=['Closing_Cnt'])
             st.dataframe(styled_df, use_container_width=True)
 
