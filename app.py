@@ -39,7 +39,6 @@ with tabs[0]:
         if u_t and st.button("Save Transactions"):
             df = pd.read_excel(u_t)
             df.columns = [str(c).strip().lower() for c in df.columns]
-            # Match by searching for keywords
             ddo_col = [c for c in df.columns if 'ddo' in c][0]
             date_col = [c for c in df.columns if 'date' in c][0]
             amt_col = [c for c in df.columns if 'amount' in c][0]
@@ -55,15 +54,14 @@ with tabs[0]:
             df = pd.read_excel(u_l)
             df.columns = [str(c).strip().lower() for c in df.columns]
             try:
-                # Specific mapping for your Linked report columns
                 df_final = df[['ddo', 'scroll date', 'cheque/trans date', 'transaction amount']]
                 df_final.columns = ['DDO', 'Scroll_Date', 'Cheque_Date', 'Amount']
                 conn = sqlite3.connect(DB_FILE)
                 df_final.to_sql('linked', conn, if_exists='append', index=False)
                 conn.close()
                 st.success("Linked Data Saved!")
-            except Exception as e:
-                st.error(f"Linked File Error! Ensure columns are 'DDO', 'Scroll Date', 'Cheque/Trans Date', 'Transaction Amount'.")
+            except:
+                st.error("Linked File Error! Check Columns.")
 
     with col2:
         st.info("📋 Step 2: Upload Permanent Masters")
@@ -71,21 +69,16 @@ with tabs[0]:
         if u_ob and st.button("Save OB Master"):
             df = pd.read_excel(u_ob)
             df.columns = [str(c).strip().lower() for c in df.columns]
-            try:
-                # Position based or Keyword based
-                df_db = df.iloc[:, [0, 1, 2, 3]]
-                df_db.columns = ['DDO', 'Head_Office', 'ob_count', 'ob_amount']
-                conn = sqlite3.connect(DB_FILE)
-                df_db.to_sql('ob_master', conn, if_exists='append', index=False)
-                conn.close()
-                st.success("OB Saved!")
-            except:
-                st.error("OB Master must have 4 columns: DDO, Office, Count, Amount")
+            df_db = df.iloc[:, [0, 1, 2, 3]]
+            df_db.columns = ['DDO', 'Head_Office', 'ob_count', 'ob_amount']
+            conn = sqlite3.connect(DB_FILE)
+            df_db.to_sql('ob_master', conn, if_exists='append', index=False)
+            conn.close()
+            st.success("OB Saved!")
 
         u_s = st.file_uploader("Staff Mapping", type=['xlsx'], key="us")
         if u_s and st.button("Save Staff Mapping"):
             df = pd.read_excel(u_s)
-            # Take first two columns regardless of name
             df_final = df.iloc[:, [0, 1]]
             df_final.columns = ['Employee_Name', 'DDO']
             conn = sqlite3.connect(DB_FILE)
@@ -161,7 +154,7 @@ if not df_staff.empty and not df_ob.empty:
                     'Opening_Cnt': int(curr_cnt), 'Opening_Amt': round(float(curr_amt), 2),
                     'New_Raised_Cnt': int(n_cnt), 'New_Raised_Amt': round(float(n_amt), 2),
                     'Linked_Current_Cnt': int(lc_cnt), 'Linked_Current_Amt': round(float(lc_amt), 2),
-                    'Linked_Arrears_Cnt': int(la_cnt), 'Linked_Arrears_Amt': round(float(la_arr_amt := la_amt), 2),
+                    'Linked_Arrears_Cnt': int(la_cnt), 'Linked_Arrears_Amt': round(float(la_amt), 2),
                     'Closing_Cnt': int(cl_cnt), 'Closing_Amt': round(float(cl_amt), 2)
                 })
                 curr_amt, curr_cnt = cl_amt, cl_cnt
@@ -178,10 +171,30 @@ if not df_staff.empty and not df_ob.empty:
             summary_df.columns = ['DDO', 'Head Office', 'As of Month', 'Final Pending Count', 'Final Pending Amount']
             st.table(summary_df.style.applymap(color_closing, subset=['Final Pending Count']))
             
+            # --- PROFESSIONAL EXCEL EXPORT WITH HEADERS ---
             output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                report_df.to_excel(writer, index=False, sheet_name='Details')
-                summary_df.to_excel(writer, index=False, sheet_name='Summary')
-            st.download_button("📥 Download Split Report", output.getvalue(), "SWR_Split_Report.xlsx")
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                # 1. Detailed Sheet
+                report_df.to_excel(writer, index=False, sheet_name='Monthly_Details', startrow=4)
+                workbook = writer.book
+                worksheet = writer.sheets['Monthly_Details']
+
+                # Formats
+                header_fmt = workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center', 'bg_color': '#D9EAD3'})
+                info_fmt = workbook.add_format({'italic': True, 'font_size': 10})
+
+                # Write Header Info
+                worksheet.merge_range('A1:L1', 'SWR ANALYSIS DETAILED REPORT', header_fmt)
+                worksheet.write('A2', f'Staff Name: {sel_staff}', info_fmt)
+                worksheet.write('A3', f'Period: {start_date} to {end_date}', info_fmt)
+                worksheet.write('A4', f'Report Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}', info_fmt)
+
+                # 2. Summary Sheet
+                summary_df.to_excel(writer, index=False, sheet_name='Final_Summary', startrow=4)
+                ws_sum = writer.sheets['Final_Summary']
+                ws_sum.merge_range('A1:E1', 'SWR FINAL POSITION SUMMARY', header_fmt)
+                ws_sum.write('A2', f'Staff Name: {sel_staff}', info_fmt)
+
+            st.download_button("📥 Download Professional Excel Report", output.getvalue(), f"SWR_Report_{sel_staff}.xlsx")
 else:
     st.info("Please upload Staff Mapping and OB Master in the Hub above.")
