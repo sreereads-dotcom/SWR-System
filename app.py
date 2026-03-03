@@ -6,7 +6,7 @@ from datetime import datetime
 import io
 
 # --- PAGE CONFIG ---
-st.set_page_config(page_title="SWR Preparation", layout="wide")
+st.set_page_config(page_title="SWR & BROAD SHEET Preparation", layout="wide")
 
 # --- DATABASE SETUP ---
 DB_FILE = "swr_master_database.db"
@@ -29,7 +29,7 @@ def color_closing(val):
     return ''
 
 # --- TITLE ---
-st.title("🏦 SWR Preparation")
+st.title("🏦 SWR & BROAD SHEET Preparation")
 
 # --- 1. DATA CENTER ---
 st.subheader("⚙️ Data Management Hub")
@@ -199,4 +199,5 @@ st.markdown("""
     For any queries, contact: <b>Sreemon P V</b>, AAO, AC section, o/o GMF Ahmedabad
 </div>
 """, unsafe_allow_html=True)
+
 
