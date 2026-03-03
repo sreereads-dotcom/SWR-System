@@ -22,9 +22,7 @@ def init_db():
 
 init_db()
 
-# --- STYLING FUNCTIONS ---
 def color_closing(val):
-    """Green if 0, Red if > 0 for individual cells"""
     color = 'background-color: #d4edda; color: #155724;' if val == 0 else 'background-color: #f8d7da; color: #721c24;'
     return color
 
@@ -41,8 +39,9 @@ with tabs[0]:
         u_t = st.file_uploader("Transaction Report", type=['xlsx'], key="ut")
         if u_t and st.button("Save Transactions"):
             df = pd.read_excel(u_t)
-            df.columns = [str(c).strip().title() for c in df.columns]
-            df_final = df[['Ddo', 'Date', 'Amount']].rename(columns={'Ddo': 'DDO'})
+            df.columns = [str(c).strip().lower() for c in df.columns]
+            df_final = df[['ddo', 'date', 'amount']]
+            df_final.columns = ['DDO', 'Date', 'Amount']
             conn = sqlite3.connect(DB_FILE)
             df_final.to_sql('transactions', conn, if_exists='append', index=False)
             conn.close()
@@ -51,30 +50,38 @@ with tabs[0]:
         u_l = st.file_uploader("Linked Report", type=['xlsx'], key="ul")
         if u_l and st.button("Save Linked Data"):
             df = pd.read_excel(u_l)
-            try:
-                df_final = df[['DDO', 'Scroll Date', 'Cheque/Trans Date', 'Transaction Amount']]
-                df_final.columns = ['DDO', 'Scroll_Date', 'Cheque_Date', 'Amount']
-                conn = sqlite3.connect(DB_FILE)
-                df_final.to_sql('linked', conn, if_exists='append', index=False)
-                conn.close()
-                st.success("Linked Data Saved!")
-            except:
-                st.error("Check Linked File Columns!")
+            df.columns = [str(c).strip().lower() for c in df.columns]
+            # Flexible mapping for Linked report
+            df_final = df[['ddo', 'scroll date', 'cheque/trans date', 'transaction amount']]
+            df_final.columns = ['DDO', 'Scroll_Date', 'Cheque_Date', 'Amount']
+            conn = sqlite3.connect(DB_FILE)
+            df_final.to_sql('linked', conn, if_exists='append', index=False)
+            conn.close()
+            st.success("Linked Data Saved!")
 
     with col2:
         st.info("📋 Step 2: Upload Permanent Masters")
         u_ob = st.file_uploader("OB Master", type=['xlsx'], key="uob")
         if u_ob and st.button("Save OB Master"):
             df = pd.read_excel(u_ob)
-            conn = sqlite3.connect(DB_FILE)
-            df_db = df[['DDO', 'Head Office', 'ob_count', 'ob_amount']].rename(columns={'Head Office': 'Head_Office'})
-            df_db.to_sql('ob_master', conn, if_exists='append', index=False)
-            conn.close()
-            st.success("OB Saved!")
+            # CLEANING: Remove spaces and lowercase all column names
+            df.columns = [str(c).strip().lower() for c in df.columns]
+            try:
+                # Find columns even if they have spaces like 'head office' or 'ob amount'
+                df_db = df[['ddo', 'head office', 'ob_count', 'ob_amount']]
+                df_db.columns = ['DDO', 'Head_Office', 'ob_count', 'ob_amount']
+                conn = sqlite3.connect(DB_FILE)
+                df_db.to_sql('ob_master', conn, if_exists='append', index=False)
+                conn.close()
+                st.success("OB Saved!")
+            except KeyError as e:
+                st.error(f"Could not find required columns in OB file. Found: {list(df.columns)}")
 
         u_s = st.file_uploader("Staff Mapping", type=['xlsx'], key="us")
         if u_s and st.button("Save Staff Mapping"):
             df = pd.read_excel(u_s)
+            df.columns = [str(c).strip().lower() for c in df.columns]
+            df.columns = ['employee_name', 'ddo'] # Force standard names
             conn = sqlite3.connect(DB_FILE)
             df.to_sql('staff_mapping', conn, if_exists='append', index=False)
             conn.close()
@@ -107,13 +114,18 @@ conn.close()
 if not df_staff.empty and not df_ob.empty:
     for df_tmp in [df_ob, df_staff, df_t, df_l]:
         if 'DDO' in df_tmp.columns: df_tmp['DDO'] = df_tmp['DDO'].astype(str).str.strip()
+        if 'ddo' in df_tmp.columns: df_tmp['ddo'] = df_tmp['ddo'].astype(str).str.strip()
 
     df_t['Date'] = pd.to_datetime(df_t['Date'], errors='coerce')
     df_l['Scroll_Date'] = pd.to_datetime(df_l['Scroll_Date'], errors='coerce')
 
-    staff_list = sorted(df_staff['Employee_Name'].unique().tolist())
+    # Mapping staff columns correctly
+    staff_col = 'employee_name' if 'employee_name' in df_staff.columns else 'Employee_Name'
+    ddo_col = 'ddo' if 'ddo' in df_staff.columns else 'DDO'
+
+    staff_list = sorted(df_staff[staff_col].unique().tolist())
     sel_staff = st.selectbox("👤 Select Employee", staff_list)
-    my_ddos = df_staff[df_staff['Employee_Name'] == sel_staff]['DDO'].tolist()
+    my_ddos = df_staff[df_staff[staff_col] == sel_staff][ddo_col].tolist()
     
     date_range = st.date_input("Select Period", value=(datetime(2025, 7, 1), datetime(2025, 9, 30)))
     
@@ -149,28 +161,21 @@ if not df_staff.empty and not df_ob.empty:
 
         if final_rows:
             report_df = pd.DataFrame(final_rows)
-            
-            # --- 1. FULL MONTHLY BREAKDOWN ---
             st.write("#### 📅 Monthly Detailed Breakdown")
             styled_df = report_df.style.applymap(color_closing, subset=['Closing_Cnt'])
             st.dataframe(styled_df, use_container_width=True)
 
-            # --- 2. FINAL SUMMARY POSITION ---
             st.write("#### 🎯 Final Unlinked Position Summary")
-            # We take the last entry for each DDO
             summary_df = report_df.groupby('DDO').last().reset_index()
             summary_df = summary_df[['DDO', 'Office', 'Month', 'Closing_Cnt', 'Closing_Amt']]
             summary_df.columns = ['DDO', 'Head Office', 'As of Month', 'Final Pending Count', 'Final Pending Amount']
-            
-            # Apply color to the summary count
             styled_summary = summary_df.style.applymap(color_closing, subset=['Final Pending Count'])
             st.table(styled_summary)
             
-            # Export
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 report_df.to_excel(writer, index=False, sheet_name='Monthly_Details')
-                summary_df.to_excel(writer, index=False, sheet_name='Final_Summary')
-            st.download_button("📥 Download Excel Report", output.getvalue(), "SWR_Final_Analysis.xlsx")
+                summary_df.to_excel(writer, index=False, sheet_name='Summary')
+            st.download_button("📥 Download Excel Report", output.getvalue(), "SWR_Analysis.xlsx")
 else:
     st.info("Please upload Staff Mapping and OB Master in the Hub above.")
