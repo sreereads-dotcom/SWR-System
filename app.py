@@ -1,135 +1,103 @@
 import streamlit as st
 import pandas as pd
+from streamlit_gsheets import GSheetsConnection
 from datetime import datetime
 import io
-import numpy as np
 
-st.set_page_config(page_title="SWR System - Count First", layout="wide")
+st.set_page_config(page_title="SWR Cloud System", layout="wide")
 
-st.title("🏦 SWR System: Count & Amount (Reordered)")
+# --- CLOUD CONNECTION ---
+conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- 1. UPLOAD SECTION ---
-with st.expander("📂 STEP 1: UPLOAD YOUR FILES", expanded=True):
-    c1, c2 = st.columns(2)
-    with c1:
-        u_ob = st.file_uploader("1. OB Master (ob.xlsx)", type=['xlsx', 'csv'])
-        u_staff = st.file_uploader("2. Staff Mapping (staff mapping.xlsx)", type=['xlsx', 'csv'])
-    with c2:
-        u_trans = st.file_uploader("3. Transactions (transaction report.xlsx)", type=['xlsx', 'csv'])
-        u_linked = st.file_uploader("4. Linked Report (linked report correct.xlsx)", type=['xlsx', 'csv'])
+st.title("🏦 SWR Cloud Management System")
 
-# --- 2. PROCESSING ENGINE ---
-if all([u_ob, u_staff, u_trans, u_linked]):
-    def load(f): 
-        return pd.read_csv(f) if f.name.endswith('.csv') else pd.read_excel(f)
+# --- 1. CLOUD SYNC SECTION ---
+with st.expander("📥 STEP 1: SYNC DATA TO GOOGLE SHEETS", expanded=True):
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        u_trans = st.file_uploader("Upload New Transactions (Excel)", type=['xlsx'])
+        if u_trans and st.button("💾 Save Transactions to Cloud"):
+            new_t = pd.read_excel(u_trans)
+            old_t = conn.read(worksheet="Transactions", ttl=0)
+            combined_t = pd.concat([old_t, new_t], ignore_index=True)
+            conn.update(worksheet="Transactions", data=combined_t)
+            st.success("Transactions Synced to Google Sheets!")
 
-    df_ob = load(u_ob)
-    df_staff = load(u_staff)
-    df_t = load(u_trans)
-    df_l = load(u_linked)
+    with col2:
+        u_linked = st.file_uploader("Upload New Linked Report (Excel)", type=['xlsx'])
+        if u_linked and st.button("💾 Save Linked to Cloud"):
+            new_l = pd.read_excel(u_linked)
+            old_l = conn.read(worksheet="Linked", ttl=0)
+            combined_l = pd.concat([old_l, new_l], ignore_index=True)
+            conn.update(worksheet="Linked", data=combined_l)
+            st.success("Linked Data Synced to Google Sheets!")
 
-    # --- SIDEBAR CONFIG ---
-    st.sidebar.header("📅 Report Settings")
-    date_range = st.sidebar.date_input("Select Range", value=(datetime(2025, 7, 1), datetime(2025, 9, 30)))
+# --- 2. REPORT GENERATION ---
+st.divider()
+st.subheader("📊 Generate SWR Report from Cloud Storage")
 
+c1, c2 = st.columns(2)
+with c1:
+    u_ob = st.file_uploader("Upload OB Master (ob.xlsx)", type=['xlsx'])
+with c2:
+    u_staff = st.file_uploader("Upload Staff Mapping (staff.xlsx)", type=['xlsx'])
+
+if all([u_ob, u_staff]):
+    df_ob = pd.read_excel(u_ob)
+    df_staff = pd.read_excel(u_staff)
+    
+    # FETCH FROM GOOGLE SHEETS
+    df_t = conn.read(worksheet="Transactions", ttl=0)
+    df_l = conn.read(worksheet="Linked", ttl=0)
+
+    # --- PROCESSOR ---
+    # Standardize column names for processing
+    df_l['Scroll Date'] = pd.to_datetime(df_l['Scroll Date'], errors='coerce')
+    df_l['cheque_clean'] = pd.to_datetime(df_l['Cheque Date'], errors='coerce')
+    df_t['trans_clean'] = pd.to_datetime(df_t['Date'], errors='coerce')
+
+    staff_list = sorted(df_staff['Employee_Name'].unique().tolist())
+    selected_staff = st.selectbox("👤 Select Employee", staff_list)
+    my_ddos = df_staff[df_staff['Employee_Name'] == selected_staff]['DDO'].tolist()
+    
+    date_range = st.date_input("Select Range", value=(datetime(2025, 7, 1), datetime(2025, 9, 30)))
+    
     if len(date_range) == 2:
         start_date, end_date = date_range
-        
-        # Standardize Dates
-        df_l['Scroll Date'] = pd.to_datetime(df_l['Scroll Date'], dayfirst=True, errors='coerce')
-        chq_col = [c for c in df_l.columns if 'Cheque' in c and 'Date' in c][0]
-        df_l['chq_date_clean'] = pd.to_datetime(df_l[chq_col], dayfirst=True, errors='coerce')
-        t_date_col = 'Date' if 'Date' in df_t.columns else [c for c in df_t.columns if 'date' in c.lower()][0]
-        df_t['trans_date_clean'] = pd.to_datetime(df_t[t_date_col], dayfirst=True, errors='coerce')
-
-        # Selection
-        staff_list = sorted(df_staff['Employee_Name'].unique().tolist())
-        selected_staff = st.sidebar.selectbox("👤 Select Employee", staff_list)
-        my_ddo_list = df_staff[df_staff['Employee_Name'] == selected_staff]['DDO'].tolist()
-
         months = pd.date_range(start=start_date, end=end_date, freq='MS').strftime('%Y-%m').tolist()
         final_rows = []
 
-        for ddo in my_ddo_list:
-            # Initial OB from file
+        for ddo in my_ddos:
             current_ob_amt = df_ob[df_ob['DDO'] == ddo]['ob_amount'].sum()
             current_ob_cnt = df_ob[df_ob['DDO'] == ddo]['ob_count'].sum()
-            office_name = df_ob[df_ob['DDO'] == ddo]['Head Office'].iloc[0] if not df_ob[df_ob['DDO'] == ddo].empty else "Unknown"
+            office_name = df_ob[df_ob['DDO'] == ddo]['Head Office'].iloc[0] if ddo in df_ob['DDO'].values else "Unknown"
 
             for month in months:
-                # 1. New Transactions (Amt & Cnt)
-                t_filt = df_t[(df_t['DDO'] == ddo) & (df_t['trans_date_clean'].dt.strftime('%Y-%m') == month)]
-                m_raised_amt = t_filt['Amount'].sum()
-                m_raised_cnt = t_filt.shape[0]
+                # Calculations
+                t_m = df_t[(df_t['DDO'] == ddo) & (df_t['trans_clean'].dt.strftime('%Y-%m') == month)]
+                l_curr = df_l[(df_l['DDO'] == ddo) & (df_l['Scroll Date'].dt.strftime('%Y-%m') == month) & (df_l['cheque_clean'].dt.strftime('%Y-%m') == month)]
+                l_prev = df_l[(df_l['DDO'] == ddo) & (df_l['Scroll Date'].dt.strftime('%Y-%m') == month) & (df_l['cheque_clean'].dt.strftime('%Y-%m') < month)]
 
-                # 2. Linked Logic (Current)
-                l_curr = df_l[(df_l['DDO'] == ddo) & (df_l['Scroll Date'].dt.strftime('%Y-%m') == month) & (df_l['chq_date_clean'].dt.strftime('%Y-%m') == month)]
-                curr_l_amt = l_curr['Transaction Amount'].sum()
-                curr_l_cnt = l_curr.shape[0]
-
-                # 3. Linked Logic (Previous)
-                l_prev = df_l[(df_l['DDO'] == ddo) & (df_l['Scroll Date'].dt.strftime('%Y-%m') == month) & (df_l['chq_date_clean'].dt.strftime('%Y-%m') < month)]
-                prev_l_amt = l_prev['Transaction Amount'].sum()
-                prev_l_cnt = l_prev.shape[0]
-
-                # 4. Math
-                unlinked_amt = (current_ob_amt + m_raised_amt) - curr_l_amt
-                unlinked_cnt = (current_ob_cnt + m_raised_cnt) - curr_l_cnt
+                unlinked_amt = (current_ob_amt + t_m['Amount'].sum()) - l_curr['Amount'].sum()
+                unlinked_cnt = (current_ob_cnt + len(t_m)) - len(l_curr)
                 
-                closing_amt = unlinked_amt - prev_l_amt
-                closing_cnt = unlinked_cnt - prev_l_cnt
+                closing_amt = unlinked_amt - l_prev['Amount'].sum()
+                closing_cnt = unlinked_cnt - len(l_prev)
 
                 final_rows.append({
-                    'Month': datetime.strptime(month, '%Y-%m').strftime('%B %Y'),
-                    'DDO': ddo,
-                    'Office': office_name,
-                    'Opening_Cnt': current_ob_cnt,
-                    'Opening_Amt': current_ob_amt,
-                    'New_Raised_Cnt': m_raised_cnt,
-                    'New_Raised_Amt': m_raised_amt,
-                    'Curr_Linked_Cnt': curr_l_cnt,
-                    'Curr_Linked_Amt': curr_l_amt,
-                    'Unlinked_Cnt': unlinked_cnt,
-                    'Unlinked_Amt': unlinked_amt,
-                    'Prev_Linked_Cnt': prev_l_cnt,
-                    'Prev_Linked_Amt': prev_l_amt,
-                    'Closing_Cnt': closing_cnt,
-                    'Closing_Amt': closing_amt
+                    'Month': month, 'DDO': ddo, 'Office': office_name,
+                    'Opening_Cnt': current_ob_cnt, 'Opening_Amt': current_ob_amt,
+                    'New_Raised_Cnt': len(t_m), 'New_Raised_Amt': t_m['Amount'].sum(),
+                    'Closing_Cnt': closing_cnt, 'Closing_Amt': closing_amt
                 })
-                current_ob_amt = closing_amt
-                current_ob_cnt = closing_cnt
+                current_ob_amt, current_ob_cnt = closing_amt, closing_cnt
 
         report_df = pd.DataFrame(final_rows)
+        st.dataframe(report_df)
         
-        # Summary with Count before Amount
-        summary_df = report_df.groupby('DDO').last().reset_index()[['DDO', 'Office', 'Closing_Cnt', 'Closing_Amt']]
-
-        # --- DYNAMIC COLOR LOGIC ---
-        def apply_heatmap(val, series):
-            if val <= series.quantile(0.4): return 'background-color: #d4edda;'
-            elif val <= series.quantile(0.8): return 'background-color: #fff3cd;'
-            else: return 'background-color: #f8d7da; font-weight: bold;'
-
-        # --- DISPLAY ---
-        st.subheader(f"📊 Report for {selected_staff}")
-        t1, t2 = st.tabs(["📑 Details (Count First)", "🎯 Final Summary"])
-        
-        with t1:
-            st.dataframe(report_df, use_container_width=True)
-        
-        with t2:
-            styled_summary = summary_df.style.apply(
-                lambda x: [apply_heatmap(v, summary_df['Closing_Amt']) for v in x], 
-                subset=['Closing_Amt']
-            ).format(precision=2)
-            st.dataframe(styled_summary, use_container_width=True)
-
-        # --- EXPORT ---
+        # Download
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            report_df.to_excel(writer, index=False, sheet_name='Monthly_Breakup')
-            summary_df.to_excel(writer, index=False, sheet_name='DDO_Summary')
-        
-        st.download_button("📥 Download Finalized Report", buffer.getvalue(), f"SWR_{selected_staff}.xlsx")
-else:
-    st.info("Please upload files to proceed.")
+            report_df.to_excel(writer, index=False)
+        st.download_button("📥 Download Report", buffer.getvalue(), "SWR_Report.xlsx")
