@@ -43,18 +43,27 @@ with st.expander("Upload Excel Files to Database", expanded=False):
             conn.close()
             st.success(f"Added {len(df_final)} rows to Transactions!")
 
-    with col2:
-        u_linked = st.file_uploader("Upload Linked Data (Excel)", type=['xlsx'], key="u_l")
+   with col2:
+        u_linked = st.file_uploader("Upload New Linked Data (Excel)", type=['xlsx'], key="u_l")
         if u_linked and st.button("💾 Save Linked to DB"):
             df = pd.read_excel(u_linked)
-            # Standardize columns: DDO, Scroll_Date, Cheque_Date, Amount
-            df.columns = ['DDO', 'Scroll_Date', 'Cheque_Date', 'Amount']
             
-            conn = sqlite3.connect(DB_FILE)
-            df.to_sql('linked', conn, if_exists='append', index=False)
-            conn.close()
-            st.success(f"Added {len(df)} rows to Linked storage!")
-
+            # --- SAFE COLUMN CLEANING ---
+            # Remove any completely empty columns or rows
+            df = df.dropna(how='all', axis=1).dropna(how='all', axis=0)
+            
+            # Check if we have at least 4 columns
+            if len(df.columns) >= 4:
+                # We take only the first 4 columns regardless of what they are named
+                df_final = df.iloc[:, :4] 
+                df_final.columns = ['DDO', 'Scroll_Date', 'Cheque_Date', 'Amount']
+                
+                conn = sqlite3.connect(DB_FILE)
+                df_final.to_sql('linked', conn, if_exists='append', index=False)
+                conn.close()
+                st.success(f"Added {len(df_final)} rows to Linked storage!")
+            else:
+                st.error(f"Your Excel only has {len(df.columns)} columns. It must have 4: DDO, Scroll Date, Cheque Date, and Amount.")
 # --- 2. REPORT GENERATION SECTION ---
 st.divider()
 st.subheader("📊 Step 2: Generate SWR Report")
@@ -154,3 +163,4 @@ if all([u_ob, u_staff]):
             st.download_button("📥 Download This Report", output.getvalue(), "SWR_Final_Report.xlsx")
         else:
             st.info("No data found for the selected criteria.")
+
