@@ -196,8 +196,9 @@ if not df_staff.empty and not df_ob.empty:
 st.divider()
 st.markdown("""
 <div style="text-align: center; color: #666; font-size: 0.9em;">
-    For any queries, contact: <b>Sreemon P V</b>, AAO, AC section, o/o GMF Ahmedabad
+    Developed by AC section, o/o GMF Ahmedabad
 </div>
 """, unsafe_allow_html=True)
+
 
 
