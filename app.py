@@ -170,13 +170,30 @@ if not df_staff.empty and not df_ob.empty:
             summary_df.columns = ['DDO', 'Head Office', 'As of Month', 'Final Pending Count', 'Final Pending Amount']
             st.table(summary_df.style.applymap(color_closing, subset=['Final Pending Count']))
             
-            # --- SAFE EXPORT (Uses openpyxl engine) ---
+            # --- PROFESSIONAL EXCEL EXPORT (USING OPENPYXL) ---
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                # We write data starting from row 5 to leave space for a manual header if needed
-                report_df.to_excel(writer, index=False, sheet_name='Monthly_Details', startrow=0)
-                summary_df.to_excel(writer, index=False, sheet_name='Summary', startrow=0)
+                # 1. Detailed Sheet
+                # Add Header Info
+                header_data = pd.DataFrame([
+                    ['SWR ANALYSIS DETAILED REPORT'],
+                    [f'Staff Name: {sel_staff}'],
+                    [f'Period: {start_date} to {end_date}'],
+                    [f'Generated on: {datetime.now().strftime("%Y-%m-%d %H:%M")}'],
+                    [] # Empty row
+                ])
+                header_data.to_excel(writer, index=False, header=False, sheet_name='Monthly_Details')
+                report_df.to_excel(writer, index=False, sheet_name='Monthly_Details', startrow=5)
+
+                # 2. Summary Sheet
+                sum_header = pd.DataFrame([
+                    ['SWR FINAL POSITION SUMMARY'],
+                    [f'Staff Name: {sel_staff}'],
+                    []
+                ])
+                sum_header.to_excel(writer, index=False, header=False, sheet_name='Summary')
+                summary_df.to_excel(writer, index=False, sheet_name='Summary', startrow=3)
                 
-            st.download_button("📥 Download SWR Report", output.getvalue(), f"SWR_Report_{sel_staff}.xlsx")
+            st.download_button("📥 Download Professional SWR Report", output.getvalue(), f"SWR_Report_{sel_staff}.xlsx")
 else:
     st.info("Please upload Staff Mapping and OB Master in the Hub above.")
