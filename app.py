@@ -164,7 +164,7 @@ if not df_staff.empty and not df_ob.empty:
 
         if final_rows:
             report_df = pd.DataFrame(final_rows)
-            st.write("#### 📅 Monthly Breakdown")
+            st.write("#### 📅 Monthly Breakdown & Broadsheet")
             st.dataframe(report_df.style.map(color_closing, subset=['Closing_Cnt']), use_container_width=True)
 
             st.write("#### 🎯 Final Summary")
@@ -199,3 +199,4 @@ st.markdown("""
     For any queries, contact: <b>Sreemon P V</b>, AAO, AC section, o/o GMF Ahmedabad
 </div>
 """, unsafe_allow_html=True)
+
