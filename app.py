@@ -37,32 +37,38 @@ with tabs[0]:
         u_t = st.file_uploader("Transaction Report", type=['xlsx'], key="ut")
         if u_t and st.button("Save Transactions"):
             df = pd.read_excel(u_t)
+            # Match: DDO, Date, Amount
             df.columns = [str(c).strip().title() for c in df.columns]
             df_final = df[['Ddo', 'Date', 'Amount']].rename(columns={'Ddo': 'DDO'})
             conn = sqlite3.connect(DB_FILE)
             df_final.to_sql('transactions', conn, if_exists='append', index=False)
             conn.close()
-            st.success("Transactions Saved!")
+            st.success(f"Saved {len(df_final)} Transactions!")
 
         u_l = st.file_uploader("Linked Report", type=['xlsx'], key="ul")
         if u_l and st.button("Save Linked Data"):
             df = pd.read_excel(u_l)
-            # Match your 'linked report correct.xlsx' structure
-            df_final = df[['DDO', 'Scroll Date', 'Cheque/Trans Date', 'Transaction Amount']]
-            df_final.columns = ['DDO', 'Scroll_Date', 'Cheque_Date', 'Amount']
-            conn = sqlite3.connect(DB_FILE)
-            df_final.to_sql('linked', conn, if_exists='append', index=False)
-            conn.close()
-            st.success("Linked Data Saved!")
+            try:
+                # MATCHING YOUR FILE: Scroll Date, Cheque/Trans Date, Transaction Amount
+                df_final = df[['DDO', 'Scroll Date', 'Cheque/Trans Date', 'Transaction Amount']]
+                df_final.columns = ['DDO', 'Scroll_Date', 'Cheque_Date', 'Amount']
+                conn = sqlite3.connect(DB_FILE)
+                df_final.to_sql('linked', conn, if_exists='append', index=False)
+                conn.close()
+                st.success(f"Saved {len(df_final)} Linked Rows!")
+            except Exception as e:
+                st.error(f"Linked File Error: Ensure columns are 'Scroll Date', 'Cheque/Trans Date', 'Transaction Amount'.")
 
     with col2:
         st.info("📋 Step 2: Upload Permanent Masters")
         u_ob = st.file_uploader("OB Master", type=['xlsx'], key="uob")
         if u_ob and st.button("Save OB Master Permanently"):
             df = pd.read_excel(u_ob)
-            df.columns = ['DDO', 'Head_Office', 'ob_count', 'ob_amount', 'Remarks'] # Adjusted for your ob.xlsx
+            # Mapping ob.xlsx
             conn = sqlite3.connect(DB_FILE)
-            df[['DDO', 'Head_Office', 'ob_count', 'ob_amount']].to_sql('ob_master', conn, if_exists='append', index=False)
+            df_db = df[['DDO', 'Head Office', 'ob_count', 'ob_amount']]
+            df_db.columns = ['DDO', 'Head_Office', 'ob_count', 'ob_amount']
+            df_db.to_sql('ob_master', conn, if_exists='append', index=False)
             conn.close()
             st.success("OB Master Saved!")
 
@@ -77,8 +83,6 @@ with tabs[0]:
 with tabs[1]:
     st.warning("Danger Zone: Deleting data cannot be undone.")
     conn = sqlite3.connect(DB_FILE)
-    
-    # Show counts
     t_count = pd.read_sql("SELECT COUNT(*) as c FROM transactions", conn).iloc[0]['c']
     l_count = pd.read_sql("SELECT COUNT(*) as c FROM linked", conn).iloc[0]['c']
     o_count = pd.read_sql("SELECT COUNT(*) as c FROM ob_master", conn).iloc[0]['c']
@@ -86,21 +90,13 @@ with tabs[1]:
 
     c1, c2, c3, c4 = st.columns(4)
     if c1.button(f"🗑️ Delete Transactions ({t_count})"):
-        conn.execute("DELETE FROM transactions")
-        conn.commit()
-        st.rerun()
+        conn.execute("DELETE FROM transactions"); conn.commit(); st.rerun()
     if c2.button(f"🗑️ Delete Linked ({l_count})"):
-        conn.execute("DELETE FROM linked")
-        conn.commit()
-        st.rerun()
-    if c3.button(f"🗑️ Delete OB Master ({o_count})"):
-        conn.execute("DELETE FROM ob_master")
-        conn.commit()
-        st.rerun()
+        conn.execute("DELETE FROM linked"); conn.commit(); st.rerun()
+    if c3.button(f"🗑️ Delete OB ({o_count})"):
+        conn.execute("DELETE FROM ob_master"); conn.commit(); st.rerun()
     if c4.button(f"🗑️ Delete Staff ({s_count})"):
-        conn.execute("DELETE FROM staff_mapping")
-        conn.commit()
-        st.rerun()
+        conn.execute("DELETE FROM staff_mapping"); conn.commit(); st.rerun()
     conn.close()
 
 # --- 2. REPORT GENERATION ---
@@ -115,11 +111,12 @@ df_l = pd.read_sql('SELECT * FROM linked', conn)
 conn.close()
 
 if not df_staff.empty and not df_ob.empty:
-    # Cleaning
+    # Standardize DDOs for matching
     for df_tmp in [df_ob, df_staff, df_t, df_l]:
         if 'DDO' in df_tmp.columns:
             df_tmp['DDO'] = df_tmp['DDO'].astype(str).str.strip()
 
+    # Convert to actual Date objects
     df_t['Date'] = pd.to_datetime(df_t['Date'], errors='coerce')
     df_l['Scroll_Date'] = pd.to_datetime(df_l['Scroll_Date'], errors='coerce')
 
@@ -127,7 +124,7 @@ if not df_staff.empty and not df_ob.empty:
     sel_staff = st.selectbox("👤 Select Employee", staff_list)
     my_ddos = df_staff[df_staff['Employee_Name'] == sel_staff]['DDO'].tolist()
     
-    date_range = st.date_input("Select Period", value=(datetime(2025, 7, 1), datetime(2025, 9, 30)))
+    date_range = st.date_input("Select Report Period", value=(datetime(2025, 7, 1), datetime(2025, 9, 30)))
     
     if len(date_range) == 2:
         start_date, end_date = date_range
@@ -136,29 +133,42 @@ if not df_staff.empty and not df_ob.empty:
 
         for ddo in my_ddos:
             ob_row = df_ob[df_ob['DDO'] == ddo]
+            # Use sum() to handle cases where a DDO might have multiple OB entries
             curr_amt = ob_row['ob_amount'].sum() if not ob_row.empty else 0
             curr_cnt = ob_row['ob_count'].sum() if not ob_row.empty else 0
             office = ob_row['Head_Office'].iloc[0] if not ob_row.empty else "Unknown"
 
             for month in months:
+                # 1. New Transactions
                 t_m = df_t[(df_t['DDO'] == ddo) & (df_t['Date'].dt.strftime('%Y-%m') == month)]
+                
+                # 2. Linked Items (Subtractions)
                 l_m = df_l[(df_l['DDO'] == ddo) & (df_l['Scroll_Date'].dt.strftime('%Y-%m') == month)]
                 
                 n_amt, n_cnt = t_m['Amount'].sum(), len(t_m)
                 li_amt, li_cnt = l_m['Amount'].sum(), len(l_m)
 
+                # Closing = Opening + Raised - Linked
                 cl_amt = (curr_amt + n_amt) - li_amt
                 cl_cnt = (curr_cnt + n_cnt) - li_cnt
 
                 final_rows.append({
                     'Month': month, 'DDO': ddo, 'Office': office,
-                    'Opening_Cnt': int(curr_cnt), 'Opening_Amt': float(curr_amt),
-                    'New_Raised_Cnt': int(n_cnt), 'New_Raised_Amt': float(n_amt),
-                    'Closing_Cnt': int(cl_cnt), 'Closing_Amt': float(cl_amt)
+                    'Opening_Cnt': int(curr_cnt), 'Opening_Amt': round(float(curr_amt), 2),
+                    'New_Raised_Cnt': int(n_cnt), 'New_Raised_Amt': round(float(n_amt), 2),
+                    'Linked_Cnt': int(li_cnt), 'Linked_Amt': round(float(li_amt), 2),
+                    'Closing_Cnt': int(cl_cnt), 'Closing_Amt': round(float(cl_amt), 2)
                 })
+                # Carry forward for next month
                 curr_amt, curr_cnt = cl_amt, cl_cnt
 
         if final_rows:
             st.dataframe(pd.DataFrame(final_rows), use_container_width=True)
+            
+            # Export
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                pd.DataFrame(final_rows).to_excel(writer, index=False)
+            st.download_button("📥 Download Excel Report", output.getvalue(), "SWR_Report.xlsx")
 else:
     st.info("Please upload Staff Mapping and OB Master in the Hub above to begin.")
