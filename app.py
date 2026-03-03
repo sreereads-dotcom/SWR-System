@@ -26,7 +26,7 @@ init_db()
 def color_closing(val):
     return 'background-color: #d4edda; color: #155724;' if val == 0 else 'background-color: #f8d7da; color: #721c24;'
 
-# --- TITLE UPDATED ---
+# --- TITLE ---
 st.title("🏦 SWR Preparation")
 
 # --- 1. DATA CENTER ---
@@ -163,14 +163,14 @@ if not df_staff.empty and not df_ob.empty:
         if final_rows:
             report_df = pd.DataFrame(final_rows)
             st.write("#### 📅 Monthly Breakdown")
-            styled_df = report_df.style.applymap(color_closing, subset=['Closing_Cnt'])
+            styled_df = report_df.style.map(color_closing, subset=['Closing_Cnt'])
             st.dataframe(styled_df, use_container_width=True)
 
             st.write("#### 🎯 Final Summary")
             summary_df = report_df.groupby('DDO').last().reset_index()
             summary_df = summary_df[['DDO', 'Office', 'Month', 'Closing_Cnt', 'Closing_Amt']]
             summary_df.columns = ['DDO', 'Head Office', 'As of Month', 'Final Pending Count', 'Final Pending Amount']
-            st.table(summary_df.style.applymap(color_closing, subset=['Final Pending Count']))
+            st.table(summary_df.style.map(color_closing, subset=['Final Pending Count']))
             
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -184,10 +184,10 @@ if not df_staff.empty and not df_ob.empty:
                 
             st.download_button("📥 Download SWR Report", output.getvalue(), f"SWR_{sel_staff}.xlsx")
 
-# --- CREDITS SECTION ---
+# --- CREDITS SECTION FIXED ---
 st.divider()
 st.markdown("""
 <div style="text-align: center; color: #666; font-size: 0.9em;">
-    For any queries, contact: <b>Sreemon P V</b>, AAO, AC section, O/O GMF Ahmedabad
+    For any queries, contact: <b>Sreemon P V</b>, AAO, AC section, o/o GMF Ahmedabad
 </div>
-""", unsafe_content_label=True)
+""", unsafe_allow_html=True)
