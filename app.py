@@ -138,7 +138,6 @@ if not df_staff.empty and not df_ob.empty:
             for month in months:
                 t_m = df_t[(df_t['DDO'] == ddo) & (df_t['Date'].dt.strftime('%Y-%m') == month)]
                 l_total = df_l[(df_l['DDO'] == ddo) & (df_l['Scroll_Date'].dt.strftime('%Y-%m') == month)]
-                
                 l_curr = l_total[l_total['Cheque_Date'].dt.strftime('%Y-%m') == month]
                 l_arr = l_total[l_total['Cheque_Date'].dt.strftime('%Y-%m') < month]
 
@@ -171,30 +170,13 @@ if not df_staff.empty and not df_ob.empty:
             summary_df.columns = ['DDO', 'Head Office', 'As of Month', 'Final Pending Count', 'Final Pending Amount']
             st.table(summary_df.style.applymap(color_closing, subset=['Final Pending Count']))
             
-            # --- PROFESSIONAL EXCEL EXPORT WITH HEADERS ---
+            # --- SAFE EXPORT (Uses openpyxl engine) ---
             output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                # 1. Detailed Sheet
-                report_df.to_excel(writer, index=False, sheet_name='Monthly_Details', startrow=4)
-                workbook = writer.book
-                worksheet = writer.sheets['Monthly_Details']
-
-                # Formats
-                header_fmt = workbook.add_format({'bold': True, 'font_size': 14, 'align': 'center', 'bg_color': '#D9EAD3'})
-                info_fmt = workbook.add_format({'italic': True, 'font_size': 10})
-
-                # Write Header Info
-                worksheet.merge_range('A1:L1', 'SWR ANALYSIS DETAILED REPORT', header_fmt)
-                worksheet.write('A2', f'Staff Name: {sel_staff}', info_fmt)
-                worksheet.write('A3', f'Period: {start_date} to {end_date}', info_fmt)
-                worksheet.write('A4', f'Report Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}', info_fmt)
-
-                # 2. Summary Sheet
-                summary_df.to_excel(writer, index=False, sheet_name='Final_Summary', startrow=4)
-                ws_sum = writer.sheets['Final_Summary']
-                ws_sum.merge_range('A1:E1', 'SWR FINAL POSITION SUMMARY', header_fmt)
-                ws_sum.write('A2', f'Staff Name: {sel_staff}', info_fmt)
-
-            st.download_button("📥 Download Professional Excel Report", output.getvalue(), f"SWR_Report_{sel_staff}.xlsx")
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                # We write data starting from row 5 to leave space for a manual header if needed
+                report_df.to_excel(writer, index=False, sheet_name='Monthly_Details', startrow=0)
+                summary_df.to_excel(writer, index=False, sheet_name='Summary', startrow=0)
+                
+            st.download_button("📥 Download SWR Report", output.getvalue(), f"SWR_Report_{sel_staff}.xlsx")
 else:
     st.info("Please upload Staff Mapping and OB Master in the Hub above.")
