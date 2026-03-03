@@ -8,152 +8,157 @@ import io
 st.set_page_config(page_title="SWR Management System", layout="wide")
 
 # --- DATABASE SETUP ---
-DB_FILE = "swr_database.db"
+DB_FILE = "swr_master_database.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS transactions 
-                 (DDO TEXT, Date TEXT, Amount REAL)''')
-    c.execute('''CREATE TABLE IF NOT EXISTS linked 
-                 (DDO TEXT, Scroll_Date TEXT, Cheque_Date TEXT, Amount REAL)''')
+    # Core Tables
+    c.execute('CREATE TABLE IF NOT EXISTS transactions (DDO TEXT, Date TEXT, Amount REAL)')
+    c.execute('CREATE TABLE IF NOT EXISTS linked (DDO TEXT, Scroll_Date TEXT, Cheque_Date TEXT, Amount REAL)')
+    # Permanent Master Tables
+    c.execute('CREATE TABLE IF NOT EXISTS ob_master (DDO TEXT, Head_Office TEXT, ob_count INTEGER, ob_amount REAL)')
+    c.execute('CREATE TABLE IF NOT EXISTS staff_mapping (Employee_Name TEXT, DDO TEXT)')
     conn.commit()
     conn.close()
 
-# Initialize the database file
 init_db()
 
-st.title("🏦 SWR Management System")
+st.title("🏦 SWR Professional Management System")
 
-# --- 1. DATA UPLOAD SECTION (TO DATABASE) ---
-st.subheader("📥 Step 1: Sync Data to Storage")
-with st.expander("Upload Excel Files to Database", expanded=True):
+# --- 1. DATA CENTER (UPLOAD & DELETE) ---
+st.subheader("⚙️ Data Management Hub")
+tabs = st.tabs(["📤 Upload Data", "🗑️ Manage/Delete Data"])
+
+with tabs[0]:
     col1, col2 = st.columns(2)
-    
     with col1:
-        st.markdown("### Transaction Data")
-        u_trans = st.file_uploader("Upload Transactions (Excel)", type=['xlsx'], key="u_t")
-        if u_trans and st.button("💾 Save Transactions to DB"):
-            df = pd.read_excel(u_trans)
-            # Clean column names to find DDO, Date, Amount
+        st.info("📊 Step 1: Upload Reports")
+        u_t = st.file_uploader("Transaction Report", type=['xlsx'], key="ut")
+        if u_t and st.button("Save Transactions"):
+            df = pd.read_excel(u_t)
             df.columns = [str(c).strip().title() for c in df.columns]
-            try:
-                df_final = df[['Ddo', 'Date', 'Amount']]
-                df_final.columns = ['DDO', 'Date', 'Amount']
-                
-                conn = sqlite3.connect(DB_FILE)
-                df_final.to_sql('transactions', conn, if_exists='append', index=False)
-                conn.close()
-                st.success(f"Added {len(df_final)} rows to Transactions!")
-            except Exception as e:
-                st.error(f"Excel error: Make sure columns are 'DDO', 'Date', 'Amount'.")
+            df_final = df[['Ddo', 'Date', 'Amount']].rename(columns={'Ddo': 'DDO'})
+            conn = sqlite3.connect(DB_FILE)
+            df_final.to_sql('transactions', conn, if_exists='append', index=False)
+            conn.close()
+            st.success("Transactions Saved!")
+
+        u_l = st.file_uploader("Linked Report", type=['xlsx'], key="ul")
+        if u_l and st.button("Save Linked Data"):
+            df = pd.read_excel(u_l)
+            # Match your 'linked report correct.xlsx' structure
+            df_final = df[['DDO', 'Scroll Date', 'Cheque/Trans Date', 'Transaction Amount']]
+            df_final.columns = ['DDO', 'Scroll_Date', 'Cheque_Date', 'Amount']
+            conn = sqlite3.connect(DB_FILE)
+            df_final.to_sql('linked', conn, if_exists='append', index=False)
+            conn.close()
+            st.success("Linked Data Saved!")
 
     with col2:
-        st.markdown("### Linked Data")
-        u_linked = st.file_uploader("Upload Linked Data (Excel)", type=['xlsx'], key="u_l")
-        if u_linked and st.button("💾 Save Linked to DB"):
-            df = pd.read_excel(u_linked)
-            # Remove empty columns/rows
-            df = df.dropna(how='all', axis=1).dropna(how='all', axis=0)
-            
-            if len(df.columns) >= 4:
-                # Take first 4 columns: DDO, Scroll Date, Cheque Date, Amount
-                df_final = df.iloc[:, :4] 
-                df_final.columns = ['DDO', 'Scroll_Date', 'Cheque_Date', 'Amount']
-                
-                conn = sqlite3.connect(DB_FILE)
-                df_final.to_sql('linked', conn, if_exists='append', index=False)
-                conn.close()
-                st.success(f"Added {len(df_final)} rows to Linked storage!")
-            else:
-                st.error(f"Linked Excel needs 4 columns. Found: {len(df.columns)}")
+        st.info("📋 Step 2: Upload Permanent Masters")
+        u_ob = st.file_uploader("OB Master", type=['xlsx'], key="uob")
+        if u_ob and st.button("Save OB Master Permanently"):
+            df = pd.read_excel(u_ob)
+            df.columns = ['DDO', 'Head_Office', 'ob_count', 'ob_amount', 'Remarks'] # Adjusted for your ob.xlsx
+            conn = sqlite3.connect(DB_FILE)
+            df[['DDO', 'Head_Office', 'ob_count', 'ob_amount']].to_sql('ob_master', conn, if_exists='append', index=False)
+            conn.close()
+            st.success("OB Master Saved!")
 
-# --- 2. REPORT GENERATION SECTION ---
-st.divider()
-st.subheader("📊 Step 2: Generate SWR Report")
+        u_s = st.file_uploader("Staff Mapping", type=['xlsx'], key="us")
+        if u_s and st.button("Save Staff Mapping Permanently"):
+            df = pd.read_excel(u_s)
+            conn = sqlite3.connect(DB_FILE)
+            df.to_sql('staff_mapping', conn, if_exists='append', index=False)
+            conn.close()
+            st.success("Staff Mapping Saved!")
 
-c1, c2 = st.columns(2)
-with c1:
-    u_ob = st.file_uploader("Upload OB Master (ob.xlsx)", type=['xlsx'])
-with c2:
-    u_staff = st.file_uploader("Upload Staff Mapping (staff.xlsx)", type=['xlsx'])
-
-if all([u_ob, u_staff]):
-    # Load User Files
-    df_ob = pd.read_excel(u_ob)
-    df_staff = pd.read_excel(u_staff)
-    
-    # Load from Storage
+with tabs[1]:
+    st.warning("Danger Zone: Deleting data cannot be undone.")
     conn = sqlite3.connect(DB_FILE)
-    df_t = pd.read_sql('SELECT * FROM transactions', conn)
-    df_l = pd.read_sql('SELECT * FROM linked', conn)
+    
+    # Show counts
+    t_count = pd.read_sql("SELECT COUNT(*) as c FROM transactions", conn).iloc[0]['c']
+    l_count = pd.read_sql("SELECT COUNT(*) as c FROM linked", conn).iloc[0]['c']
+    o_count = pd.read_sql("SELECT COUNT(*) as c FROM ob_master", conn).iloc[0]['c']
+    s_count = pd.read_sql("SELECT COUNT(*) as c FROM staff_mapping", conn).iloc[0]['c']
+
+    c1, c2, c3, c4 = st.columns(4)
+    if c1.button(f"🗑️ Delete Transactions ({t_count})"):
+        conn.execute("DELETE FROM transactions")
+        conn.commit()
+        st.rerun()
+    if c2.button(f"🗑️ Delete Linked ({l_count})"):
+        conn.execute("DELETE FROM linked")
+        conn.commit()
+        st.rerun()
+    if c3.button(f"🗑️ Delete OB Master ({o_count})"):
+        conn.execute("DELETE FROM ob_master")
+        conn.commit()
+        st.rerun()
+    if c4.button(f"🗑️ Delete Staff ({s_count})"):
+        conn.execute("DELETE FROM staff_mapping")
+        conn.commit()
+        st.rerun()
     conn.close()
 
-    if df_t.empty:
-        st.warning("Database is empty. Please upload and Save Transactions in Step 1.")
-        st.stop()
+# --- 2. REPORT GENERATION ---
+st.divider()
+st.subheader("📊 Step 3: Generate SWR Report")
 
-    # Process Dates
-    df_t['trans_clean'] = pd.to_datetime(df_t['Date'], errors='coerce')
+conn = sqlite3.connect(DB_FILE)
+df_staff = pd.read_sql('SELECT * FROM staff_mapping', conn)
+df_ob = pd.read_sql('SELECT * FROM ob_master', conn)
+df_t = pd.read_sql('SELECT * FROM transactions', conn)
+df_l = pd.read_sql('SELECT * FROM linked', conn)
+conn.close()
+
+if not df_staff.empty and not df_ob.empty:
+    # Cleaning
+    for df_tmp in [df_ob, df_staff, df_t, df_l]:
+        if 'DDO' in df_tmp.columns:
+            df_tmp['DDO'] = df_tmp['DDO'].astype(str).str.strip()
+
+    df_t['Date'] = pd.to_datetime(df_t['Date'], errors='coerce')
     df_l['Scroll_Date'] = pd.to_datetime(df_l['Scroll_Date'], errors='coerce')
-    df_l['cheque_clean'] = pd.to_datetime(df_l['Cheque_Date'], errors='coerce')
 
-    # Selection UI
     staff_list = sorted(df_staff['Employee_Name'].unique().tolist())
-    selected_staff = st.selectbox("👤 Select Employee", staff_list)
+    sel_staff = st.selectbox("👤 Select Employee", staff_list)
+    my_ddos = df_staff[df_staff['Employee_Name'] == sel_staff]['DDO'].tolist()
     
-    my_ddos = df_staff[df_staff['Employee_Name'] == selected_staff]['DDO'].tolist()
-    
-    date_range = st.date_input("Select Report Period", 
-                               value=(datetime(2025, 7, 1), datetime(2025, 9, 30)))
+    date_range = st.date_input("Select Period", value=(datetime(2025, 7, 1), datetime(2025, 9, 30)))
     
     if len(date_range) == 2:
         start_date, end_date = date_range
         months = pd.date_range(start=start_date, end=end_date, freq='MS').strftime('%Y-%m').tolist()
-        
         final_rows = []
 
         for ddo in my_ddos:
             ob_row = df_ob[df_ob['DDO'] == ddo]
-            if ob_row.empty: continue
-                
-            curr_amt = ob_row['ob_amount'].sum()
-            curr_cnt = ob_row['ob_count'].sum()
-            office = ob_row['Head Office'].iloc[0]
+            curr_amt = ob_row['ob_amount'].sum() if not ob_row.empty else 0
+            curr_cnt = ob_row['ob_count'].sum() if not ob_row.empty else 0
+            office = ob_row['Head_Office'].iloc[0] if not ob_row.empty else "Unknown"
 
             for month in months:
-                # Month filter
-                t_m = df_t[(df_t['DDO'] == ddo) & (df_t['trans_clean'].dt.strftime('%Y-%m') == month)]
+                t_m = df_t[(df_t['DDO'] == ddo) & (df_t['Date'].dt.strftime('%Y-%m') == month)]
+                l_m = df_l[(df_l['DDO'] == ddo) & (df_l['Scroll_Date'].dt.strftime('%Y-%m') == month)]
                 
-                l_curr = df_l[(df_l['DDO'] == ddo) & 
-                              (df_l['Scroll_Date'].dt.strftime('%Y-%m') == month) & 
-                              (df_l['cheque_clean'].dt.strftime('%Y-%m') == month)]
-                
-                l_prev = df_l[(df_l['DDO'] == ddo) & 
-                              (df_l['Scroll_Date'].dt.strftime('%Y-%m') == month) & 
-                              (df_l['cheque_clean'].dt.strftime('%Y-%m') < month)]
+                n_amt, n_cnt = t_m['Amount'].sum(), len(t_m)
+                li_amt, li_cnt = l_m['Amount'].sum(), len(l_m)
 
-                # SWR Calculation Logic
-                un_amt = (curr_amt + t_m['Amount'].sum()) - l_curr['Amount'].sum()
-                un_cnt = (curr_cnt + len(t_m)) - len(l_curr)
-                
-                cl_amt = un_amt - l_prev['Amount'].sum()
-                cl_cnt = un_cnt - len(l_prev)
+                cl_amt = (curr_amt + n_amt) - li_amt
+                cl_cnt = (curr_cnt + n_cnt) - li_cnt
 
                 final_rows.append({
                     'Month': month, 'DDO': ddo, 'Office': office,
-                    'Opening_Cnt': curr_cnt, 'Opening_Amt': curr_amt,
-                    'New_Raised_Cnt': len(t_m), 'New_Raised_Amt': t_m['Amount'].sum(),
-                    'Closing_Cnt': cl_cnt, 'Closing_Amt': cl_amt
+                    'Opening_Cnt': int(curr_cnt), 'Opening_Amt': float(curr_amt),
+                    'New_Raised_Cnt': int(n_cnt), 'New_Raised_Amt': float(n_amt),
+                    'Closing_Cnt': int(cl_cnt), 'Closing_Amt': float(cl_amt)
                 })
-                # Set next month's opening
                 curr_amt, curr_cnt = cl_amt, cl_cnt
 
         if final_rows:
-            report_df = pd.DataFrame(final_rows)
-            st.dataframe(report_df, use_container_width=True)
-            
-            output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                report_df.to_excel(writer, index=False)
-            st.download_button("📥 Download Excel Report", output.getvalue(), "SWR_Report.xlsx")
+            st.dataframe(pd.DataFrame(final_rows), use_container_width=True)
+else:
+    st.info("Please upload Staff Mapping and OB Master in the Hub above to begin.")
